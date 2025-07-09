@@ -7,7 +7,7 @@ TOKEN = os.getenv('TOKEN')
 from boss_data import boss_intervals, boss_delays
 
 DATA_FILE = 'boss_data.json'
-CHANNEL_ID = 1280857395983286362
+CHANNEL_ID = 1358993176660152423
 
 intents = discord.Intents.default()
 intents.message_content = True
