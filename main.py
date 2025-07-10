@@ -523,4 +523,3 @@ async def weekly_reset():
             await channel.send("🔄 毎週水曜 5:00 に全ボスをリセットしました。")
 
 bot.run(TOKEN)
->>>>>>> 9c0ac28985106821f045db9625cb188f0e228030
