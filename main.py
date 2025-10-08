@@ -1,11 +1,10 @@
 import discord
 from discord.ext import tasks
 import datetime
-from zoneinfo import ZoneInfo
 import json
 import os
 from dotenv import load_dotenv
-from boss_data import boss_intervals, boss_delays
+from boss_data import boss_intervals, boss_delays  # 事前に作成済みとする
 
 load_dotenv()
 TOKEN = os.getenv('DISCORD_TOKEN')
@@ -60,8 +59,6 @@ def load_data():
             manual_updated_per_channel[ch_id] = set()
             for boss, v in data.items():
                 next_time = datetime.datetime.strptime(v["next"], '%Y-%m-%d %H:%M')
-                # JST に変換
-                next_time = next_time.replace(tzinfo=ZoneInfo("Asia/Tokyo"))
                 boss_data_per_channel[ch_id][boss] = {"next": next_time, "interval": v["interval"]}
 
 # --- auto_clear_flag.json ---
@@ -75,15 +72,15 @@ def get_last_clear_week(channel_id):
 def set_last_clear_week(channel_id, week_number):
     data = {}
     if os.path.exists(AUTO_CLEAR_FILE):
-        with open(AUTO_CLEAR_FILE, 'r') as f:
+        with open(AUTO_CLEAR_FILE, 'r', encoding='utf-8') as f:
             data = json.load(f)
     data[str(channel_id)] = week_number
     with open(AUTO_CLEAR_FILE, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-# --- clear関数（今日5:00 JST 基準でリセット） ---
+# --- clear関数（今日5:00基準でリセット） ---
 async def clear_boss_data(channel_id):
-    now = datetime.datetime.now(ZoneInfo("Asia/Tokyo"))
+    now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9)))  # JST
     base_time = now.replace(hour=5, minute=0, second=0, microsecond=0)
 
     boss_data_per_channel[channel_id] = {}
@@ -98,9 +95,9 @@ async def clear_boss_data(channel_id):
     save_data()
     channel = client.get_channel(channel_id)
     if channel:
-        await channel.send(f"🧹 全ボスの湧き時間を{base_time.strftime('%Y-%m-%d %H:%M')} JST 基準でリセットしました。")
+        await channel.send(f"🧹 全ボスの湧き時間を {base_time.strftime('%Y-%m-%d %H:%M')} JST 基準でリセットしました。")
 
-# --- maintenance関数（入力時刻 JST 基準） ---
+# --- maintenance関数（入力時刻基準） ---
 async def maintenance_reset(channel_id, base_time):
     boss_data_per_channel[channel_id] = {}
     manual_updated_per_channel[channel_id] = set()
@@ -120,7 +117,7 @@ async def on_ready():
     load_data()
     print(f'Logged in as {client.user}')
 
-    now = datetime.datetime.now(ZoneInfo("Asia/Tokyo"))
+    now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9)))
     week_number = now.isocalendar()[1]
 
     for ch_id in CHANNELS:
@@ -149,7 +146,7 @@ async def on_message(message):
     manual_updated = manual_updated_per_channel[ch_id]
 
     content = message.content.strip()
-    now = datetime.datetime.now(ZoneInfo("Asia/Tokyo"))
+    now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9)))
     channel = message.channel
 
     # clearコマンド
@@ -163,58 +160,62 @@ async def on_message(message):
         await maintenance_reset(ch_id, base_time)
         return
 
-    # reset YYYYMMDDHHMM
-    if content.lower().startswith("reset"):
-        parts = content.split()
-        if len(parts) == 2 and parts[1].isdigit() and len(parts[1]) == 12:
+    # ボス登録（時間+オプション-1）
+    parts = content.split()
+    if len(parts) >= 2:
+        boss_name = boss_aliases.get(parts[0], parts[0])
+        time_str = parts[1]
+        day_offset = -1 if len(parts) >= 3 and parts[2] == "-1" else 0
+
+        if boss_name in boss_intervals and time_str.isdigit() and len(time_str) == 4:
             try:
-                y, m, d, h, mi = int(parts[1][:4]), int(parts[1][4:6]), int(parts[1][6:8]), int(parts[1][8:10]), int(parts[1][10:12])
-                base_time = datetime.datetime(year=y, month=m, day=d, hour=h, minute=mi, tzinfo=ZoneInfo("Asia/Tokyo"))
-                for boss in boss_intervals:
-                    if boss not in manual_updated:
-                        interval_minutes = boss_intervals[boss]
-                        delay_minutes = boss_delays.get(boss, 0)
-                        boss_data[boss] = {"next": base_time + datetime.timedelta(minutes=delay_minutes), "interval": interval_minutes}
+                hour = int(time_str[:2])
+                minute = int(time_str[2:])
+                base_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0) + datetime.timedelta(days=day_offset)
+                interval_minutes = boss_intervals[boss_name]
+                next_spawn = base_time + datetime.timedelta(minutes=interval_minutes)
+
+                boss_data[boss_name] = {"next": next_spawn, "interval": interval_minutes}
+                manual_updated.add(boss_name)
                 save_data()
-                await channel.send(f"🧹 {base_time.strftime('%Y-%m-%d %H:%M')} JST 基準でリセットしました。")
+
+                await channel.send(f"✅ {boss_name} の次の湧き時間を {next_spawn.strftime('%H:%M')} JST に更新しました。")
             except ValueError:
-                await channel.send("⚠️ 日付フォーマットが正しくありません。")
+                await channel.send("⚠️ 時刻の形式が正しくありません。")
+
+# --- 通知タスク ---
+@tasks.loop(minutes=1)
+async def notify_bosses():
+    now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9)))
+    if now.minute != 0:
         return
 
-    # list 6時間以内
-    if content.lower() == "list":
-        six_hours_later = now + datetime.timedelta(hours=6)
-        notify_list = [(v["next"], boss) for boss, v in boss_data.items() if now <= v["next"] <= six_hours_later]
+    for ch_id in CHANNELS:
+        boss_data = boss_data_per_channel[ch_id]
+        upcoming = now + datetime.timedelta(hours=3)
+        notify_list = []
+        for boss, v in boss_data.items():
+            spawn_time = v["next"]
+            if now <= spawn_time <= upcoming:
+                notify_list.append((spawn_time, boss))
+            elif spawn_time < now:
+                boss_data[boss]["next"] = spawn_time + datetime.timedelta(minutes=v["interval"])
+                save_data()
         if notify_list:
             notify_list.sort(key=lambda x: x[0])
-            msg = "\n".join(f"{t.strftime('%H:%M')}/{b}" for t, b in notify_list)
-            await channel.send("🔔 **ボス一覧(6時間以内)**：\n" + msg)
-        else:
-            await channel.send("📝 6時間以内に湧くボスはありません。")
-        return
+            channel = client.get_channel(ch_id)
+            if channel:
+                msg = "\n".join(f"{t.strftime('%H:%M')}/{b}" for t, b in notify_list)
+                await channel.send("🔔 **ボス一覧**：\n" + msg)
 
-# --- ボス登録（時間+オプション-1） ---
-parts = content.split()
-if len(parts) >= 2:
-    boss_name = boss_aliases.get(parts[0], parts[0])
-    time_str = parts[1]
-    day_offset = -1 if len(parts) >= 3 and parts[2] == "-1" else 0
+# --- 毎週水曜5時リセット ---
+@tasks.loop(hours=1)
+async def weekly_reset():
+    now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=9)))
+    if now.weekday() == 2 and now.hour == 5:
+        for ch_id in CHANNELS:
+            await clear_boss_data(ch_id)
+            week_number = now.isocalendar()[1]
+            set_last_clear_week(ch_id, week_number)
 
-    if boss_name in boss_intervals and time_str.isdigit() and len(time_str) == 4:
-        try:
-            hour = int(time_str[:2])
-            minute = int(time_str[2:])
-            base_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0) + datetime.timedelta(days=day_offset)
-            interval_minutes = boss_intervals[boss_name]
-            next_spawn = base_time + datetime.timedelta(minutes=interval_minutes)
-            
-            # ← ここで辞書を正しく閉じる
-            boss_data[boss_name] = {"next": next_spawn, "interval": interval_minutes}
-
-            manual_updated.add(boss_name)
-            save_data()
-            await channel.send(f"✅ {boss_name} の次の湧き時間を {next_spawn.strftime('%H:%M')} JST に更新しました。")
-        except ValueError:
-            await channel.send("⚠️ 時刻の形式が正しくありません。")
-
-
+client.run(TOKEN)
