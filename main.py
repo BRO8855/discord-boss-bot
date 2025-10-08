@@ -125,11 +125,6 @@ async def on_ready():
             boss_data_per_channel[ch_id] = {}
             manual_updated_per_channel[ch_id] = set()
 
-        # 水曜5時以降の初回起動で自動クリア
-        if now.weekday() == 2 and now.hour >= 5 and get_last_clear_week(ch_id) != week_number:
-            await clear_boss_data(ch_id)
-            set_last_clear_week(ch_id, week_number)
-
     notify_bosses.start()
     weekly_reset.start()
 
@@ -219,3 +214,4 @@ async def weekly_reset():
             set_last_clear_week(ch_id, week_number)
 
 client.run(TOKEN)
+
