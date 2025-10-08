@@ -193,18 +193,28 @@ async def on_message(message):
             await channel.send("📝 6時間以内に湧くボスはありません。")
         return
 
-    # ボス登録（時間+オプション-1）
-    parts = content.split()
-    if len(parts) >= 2:
-        boss_name = boss_aliases.get(parts[0], parts[0])
-        time_str = parts[1]
-        day_offset = -1 if len(parts) >= 3 and parts[2] == "-1" else 0
+# --- ボス登録（時間+オプション-1） ---
+parts = content.split()
+if len(parts) >= 2:
+    boss_name = boss_aliases.get(parts[0], parts[0])
+    time_str = parts[1]
+    day_offset = -1 if len(parts) >= 3 and parts[2] == "-1" else 0
 
-        if boss_name in boss_intervals and time_str.isdigit() and len(time_str) == 4:
-            try:
-                hour = int(time_str[:2])
-                minute = int(time_str[2:])
-                base_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0) + datetime.timedelta(days=day_offset)
-                interval_minutes = boss_intervals[boss_name]
-                next_spawn = base_time + datetime.timedelta(minutes=interval_minutes)
-                boss_data[boss_name] = {"next": next_spawn, "interval": interval
+    if boss_name in boss_intervals and time_str.isdigit() and len(time_str) == 4:
+        try:
+            hour = int(time_str[:2])
+            minute = int(time_str[2:])
+            base_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0) + datetime.timedelta(days=day_offset)
+            interval_minutes = boss_intervals[boss_name]
+            next_spawn = base_time + datetime.timedelta(minutes=interval_minutes)
+            
+            # ← ここで辞書を正しく閉じる
+            boss_data[boss_name] = {"next": next_spawn, "interval": interval_minutes}
+
+            manual_updated.add(boss_name)
+            save_data()
+            await channel.send(f"✅ {boss_name} の次の湧き時間を {next_spawn.strftime('%H:%M')} JST に更新しました。")
+        except ValueError:
+            await channel.send("⚠️ 時刻の形式が正しくありません。")
+
+
