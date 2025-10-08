@@ -17,4 +17,4 @@ COPY . .
 EXPOSE 3000
 
 # Bot起動コマンド
-CMD ["node", "index.js"]
+CMD ["node", "app/bot.py"]
