@@ -1,17 +1,20 @@
-# Node.jsのバージョン、変える事。
+# ベースイメージ
 FROM node:18
 
-# 作業ディレクトリを /app に
+# 作業ディレクトリを設定
 WORKDIR /app
 
-# app フォルダ内の内容をコンテナの /app にコピー
-COPY app/ .
+# package.json と package-lock.json を先にコピー
+COPY package*.json ./
 
-# 依存関係のインストール
+# 依存関係をインストール
 RUN npm install
 
-# ポートを開ける（Koyeb用）、使用してるポート番号にすること。
+# ソースコードをコピー
+COPY . .
+
+# ポートを指定（必要なら）
 EXPOSE 3000
 
-# アプリの起動、コマンドを指定しよう。index.jsなら"node", "index.js"
-CMD ["node", "bot.py"]
+# Bot起動コマンド
+CMD ["node", "index.js"]
